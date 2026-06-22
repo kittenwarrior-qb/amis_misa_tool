@@ -617,39 +617,39 @@
 
         // ── Panel (ẩn mặc định) ───────────────────────────────────
         const legend = Object.values(COLOR).map(c => `
-            <div style="display:flex;align-items:center;gap:9px;margin:5px 0">
-                <span style="flex-shrink:0;width:20px;height:20px;border-radius:3px;
-                    background:${c.bg};border-left:4px solid ${c.border};
+            <div style="display:flex;align-items:center;gap:12px;margin:8px 0">
+                <span style="flex-shrink:0;width:28px;height:28px;border-radius:4px;
+                    background:${c.bg};border-left:6px solid ${c.border};
                     box-shadow:inset 0 0 0 1px rgba(0,0,0,.08);display:inline-block;"></span>
-                <span style="font-size:13.5px;line-height:1.3">${c.label}</span>
+                <span style="font-size:17px;line-height:1.35">${c.label}</span>
             </div>`).join('');
 
         const panel = document.createElement('div');
         panel.id = 'misa-panel';
         panel.style.cssText = [
-            'position:fixed;bottom:84px;right:24px;z-index:2147483647;',
-            'background:#fff;border:2px solid #1565c0;border-radius:10px;',
-            'padding:12px 14px 10px;box-shadow:0 8px 32px rgba(21,101,192,.22),0 2px 8px rgba(0,0,0,.12);',
-            'font:14px/1.5 "Segoe UI",Arial,sans-serif;color:#1a1a2e;',
-            'width:218px;user-select:none;display:none;',
+            'position:fixed;bottom:96px;right:24px;z-index:2147483647;',
+            'background:#fff;border:3px solid #1565c0;border-radius:14px;',
+            'padding:18px 20px 16px;box-shadow:0 10px 40px rgba(21,101,192,.25),0 3px 10px rgba(0,0,0,.14);',
+            'font:17px/1.5 "Segoe UI",Arial,sans-serif;color:#1a1a2e;',
+            'width:300px;user-select:none;display:none;',
         ].join('');
         panel.innerHTML = `
-            <div id="misa-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;cursor:move;">
-                <strong style="font-size:14px;letter-spacing:.2px">Màu xuất kho</strong>
-                <span id="misa-close" style="cursor:pointer;color:#bbb;font-size:17px;line-height:1;padding:0 4px;">✕</span>
+            <div id="misa-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;cursor:move;">
+                <strong style="font-size:19px;letter-spacing:.2px">Màu xuất kho</strong>
+                <span id="misa-close" style="cursor:pointer;color:#aaa;font-size:24px;line-height:1;padding:0 6px;">✕</span>
             </div>
-            <div style="margin-bottom:11px;padding-bottom:10px;border-bottom:1px solid #f0f0f0">${legend}</div>
-            <div style="display:flex;flex-direction:column;gap:7px;">
-                <button id="misa-scan" style="background:#1565c0;color:#fff;border:none;padding:10px;border-radius:6px;cursor:pointer;font-size:14px;font-weight:700;width:100%;letter-spacing:.2px;">Quét &amp; tô màu</button>
-                <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="misa-auto" style="width:14px;height:14px;accent-color:#1565c0;cursor:pointer;"> Tự động quét
+            <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #f0f0f0">${legend}</div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+                <button id="misa-scan" style="background:#1565c0;color:#fff;border:none;padding:14px;border-radius:8px;cursor:pointer;font-size:18px;font-weight:700;width:100%;letter-spacing:.2px;">Quét &amp; tô màu</button>
+                <label style="display:flex;align-items:center;gap:10px;font-size:16px;cursor:pointer;">
+                    <input type="checkbox" id="misa-auto" style="width:19px;height:19px;accent-color:#1565c0;cursor:pointer;"> Tự động quét
                 </label>
-                <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="misa-col" style="width:14px;height:14px;accent-color:#1565c0;cursor:pointer;"> Hiện cột Số lượng
+                <label style="display:flex;align-items:center;gap:10px;font-size:16px;cursor:pointer;">
+                    <input type="checkbox" id="misa-col" style="width:19px;height:19px;accent-color:#1565c0;cursor:pointer;"> Hiện cột Số lượng
                 </label>
-                <button id="misa-clear" style="background:#f5f5f5;color:#555;border:1px solid #e0e0e0;padding:8px;border-radius:6px;cursor:pointer;font-size:13px;width:100%;">Xóa màu</button>
+                <button id="misa-clear" style="background:#f5f5f5;color:#555;border:1px solid #e0e0e0;padding:12px;border-radius:8px;cursor:pointer;font-size:16px;width:100%;">Xóa màu</button>
             </div>
-            <div id="misa-status" style="margin-top:9px;padding-top:8px;border-top:1px solid #f0f0f0;font-size:12px;color:#666;text-align:center;min-height:16px;"></div>`;
+            <div id="misa-status" style="margin-top:12px;padding-top:12px;border-top:1px solid #f0f0f0;font-size:15px;color:#666;text-align:center;min-height:20px;"></div>`;
         document.body.appendChild(panel);
 
         // ── Toggle panel khi bấm FAB ──────────────────────────────
