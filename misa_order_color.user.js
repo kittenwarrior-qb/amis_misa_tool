@@ -32,7 +32,7 @@
     const CONCURRENCY = 6;
 
     // Cột "SL gốc" chèn thêm vào lưới
-    let SHOW_COLUMN = true;
+    let SHOW_COLUMN = false;
     const COL_TITLE = 'Số lượng';
     const COL_WIDTH = 110;
     const COL_ANCHOR = 'Giá trị đã xuất hóa đơn'; // chèn cột mới NGAY TRƯỚC cột này
@@ -53,12 +53,16 @@
        2. MÀU SẮC
     ══════════════════════════════════════════════════════════════ */
     const COLOR = {
-        full:    { bg: '#c8e6c9', border: '#2e7d32', label: 'Đã xuất đủ số lượng' },
-        partial: { bg: '#fff9c4', border: '#f9a825', label: 'Xuất kho một phần' },
-        none:    { bg: '#ffcdd2', border: '#c62828', label: 'Chưa có phiếu xuất kho' },
-        zero:    { bg: '#eeeeee', border: '#9e9e9e', label: 'Đơn không có hàng' },
+        full:    { bg: '#c8e6c9', activeBg: '#81c784', border: '#2e7d32', label: 'Đã xuất đủ số lượng' },
+        partial: { bg: '#fff9c4', activeBg: '#ffd54f', border: '#f9a825', label: 'Xuất kho một phần' },
+        none:    { bg: '#ffcdd2', activeBg: '#ef9a9a', border: '#c62828', label: 'Chưa có phiếu xuất kho' },
+        zero:    { bg: '#eeeeee', activeBg: '#bdbdbd', border: '#9e9e9e', label: 'Đơn không có hàng' },
     };
     const COLOR_CLASSES = Object.keys(COLOR).map(k => `misa-${k}`);
+
+    // Registry màu hiện tại để MutationObserver có thể re-apply khi MISA override
+    const coloredRows = new Map(); // <tr> → { bg, border }
+    let colorObserver = null;
 
     /* ══════════════════════════════════════════════════════════════
        3. STATE bắt được từ network
@@ -252,20 +256,84 @@
         return 'none';
     }
 
+    // Row có class lạ (không phải ms-tr-viewer hay misa-*) = đang ở trạng thái active/selected
+    function isRowActive(row) {
+        return [...row.classList].some(cls => cls !== 'ms-tr-viewer' && !cls.startsWith('misa-'));
+    }
+
+    // Apply màu inline (normal hoặc darker khi active) — một chỗ duy nhất xử lý
+    function reapplyColor(row) {
+        const c = coloredRows.get(row);
+        if (!c) return;
+        const bg = isRowActive(row) ? c.activeBg : c.bg;
+        row.querySelectorAll('td').forEach((td, i) => {
+            td.style.setProperty('background-color', bg, 'important');
+            if (i === 0) td.style.setProperty('box-shadow', `inset 4px 0 0 ${c.border}`, 'important');
+        });
+    }
+
     function applyColor(row, key) {
         COLOR_CLASSES.forEach(c => row.classList.remove(c));
-        if (key) { row.classList.add(`misa-${key}`); row.title = COLOR[key] ? COLOR[key].label : ''; }
+        row.querySelectorAll('td').forEach(td => {
+            td.style.removeProperty('background-color');
+            td.style.removeProperty('box-shadow');
+        });
+        if (!key) { coloredRows.delete(row); return; }
+        row.classList.add(`misa-${key}`);
+        row.title = COLOR[key] ? COLOR[key].label : '';
+        coloredRows.set(row, COLOR[key]);
+        reapplyColor(row);
     }
+
     function clearAllColors() {
-        getOrderRows().forEach(r => { COLOR_CLASSES.forEach(c => r.classList.remove(c)); r.title = ''; });
+        getOrderRows().forEach(r => {
+            COLOR_CLASSES.forEach(c => r.classList.remove(c));
+            r.title = '';
+            r.querySelectorAll('td').forEach(td => {
+                td.style.removeProperty('background-color');
+                td.style.removeProperty('box-shadow');
+            });
+        });
+        coloredRows.clear();
+        if (colorObserver) { colorObserver.disconnect(); colorObserver = null; }
+    }
+
+    // Giữ màu khi MISA thêm class active/selected vào row
+    function startColorGuard() {
+        if (colorObserver) colorObserver.disconnect();
+        if (coloredRows.size === 0) return;
+        const table = document.querySelector('table');
+        if (!table) return;
+        colorObserver = new MutationObserver(mutations => {
+            mutations.forEach(m => {
+                if (m.attributeName !== 'class') return;
+                const row = m.target;
+                if (!row.isConnected) { coloredRows.delete(row); return; }
+                if (coloredRows.has(row)) reapplyColor(row);
+            });
+        });
+        colorObserver.observe(table, { attributes: true, attributeFilter: ['class'], subtree: true });
     }
 
     let styleEl = null;
+    let _vAttrCache = '';
     function injectStyles() {
-        if (styleEl && styleEl.isConnected) return;
+        // Detect Vue scoped attribute (data-v-*) để tăng specificity hơn MISA's active state CSS
+        const vAttr = (() => {
+            const cell = document.querySelector('td.ms-td-viewer');
+            if (!cell) return '';
+            for (const attr of cell.attributes) if (attr.name.startsWith('data-v-')) return attr.name;
+            return '';
+        })();
+        // Bỏ qua nếu style đã được inject và data-v không đổi
+        if (styleEl && styleEl.isConnected && vAttr === _vAttrCache) return;
+        if (styleEl) { try { styleEl.remove(); } catch (e) {} }
+        _vAttrCache = vAttr;
+        const vs = vAttr ? `[${vAttr}]` : '';
+        // Specificity (0,4,2) > MISA's active state (0,4,0) → màu của ta thắng kể cả khi row được chọn
         const css = Object.entries(COLOR).map(([k, c]) => `
-            tr.misa-${k} td { background-color: ${c.bg} !important; }
-            tr.misa-${k} td:first-child { box-shadow: inset 4px 0 0 ${c.border}; }
+            tr.ms-tr-viewer.misa-${k} td${vs}.ms-td-viewer,
+            tr.ms-tr-viewer.misa-${k} td.misa-qty-cell { background-color: ${c.bg} !important; }
         `).join('');
         if (typeof GM_addStyle !== 'undefined') {
             styleEl = GM_addStyle(css);
@@ -495,6 +563,7 @@
             if (status) { applyColor(row, status); counts[status]++; }
         });
         maintainColumn();
+        startColorGuard();
         return counts;
     }
 
@@ -535,13 +604,13 @@
         fab.id = 'misa-fab';
         fab.style.cssText = [
             'position:fixed;bottom:24px;right:24px;z-index:2147483647;',
-            'width:50px;height:50px;border-radius:50%;background:#fff;',
+            'width:50px;height:50px;border-radius:50%;background:#fff;overflow:hidden;',
             'display:flex;align-items:center;justify-content:center;',
             'cursor:pointer;box-shadow:0 3px 14px rgba(0,0,0,.25);',
             'user-select:none;transition:transform .15s,box-shadow .15s;',
         ].join('');
         fab.innerHTML = `<img src="https://satoriwater.org/wp-content/uploads/2024/01/logo-satori-vuong.webp"
-            style="width:36px;height:36px;border-radius:50%;object-fit:cover;display:block;" draggable="false">`;
+            style="width:100%;height:100%;object-fit:cover;display:block;" draggable="false">`;
         fab.addEventListener('mouseenter', () => { fab.style.transform = 'scale(1.07)'; fab.style.boxShadow = '0 4px 16px rgba(0,0,0,.28)'; });
         fab.addEventListener('mouseleave', () => { fab.style.transform = ''; fab.style.boxShadow = '0 3px 14px rgba(0,0,0,.25)'; });
         document.body.appendChild(fab);
@@ -559,8 +628,8 @@
         panel.id = 'misa-panel';
         panel.style.cssText = [
             'position:fixed;bottom:84px;right:24px;z-index:2147483647;',
-            'background:#fff;border:1px solid #d0d7de;border-radius:10px;',
-            'padding:12px 14px 10px;box-shadow:0 6px 24px rgba(0,0,0,.16);',
+            'background:#fff;border:2px solid #1565c0;border-radius:10px;',
+            'padding:12px 14px 10px;box-shadow:0 8px 32px rgba(21,101,192,.22),0 2px 8px rgba(0,0,0,.12);',
             'font:14px/1.5 "Segoe UI",Arial,sans-serif;color:#1a1a2e;',
             'width:218px;user-select:none;display:none;',
         ].join('');
@@ -576,7 +645,7 @@
                     <input type="checkbox" id="misa-auto" style="width:14px;height:14px;accent-color:#1565c0;cursor:pointer;"> Tự động quét
                 </label>
                 <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;">
-                    <input type="checkbox" id="misa-col" checked style="width:14px;height:14px;accent-color:#1565c0;cursor:pointer;"> Hiện cột Số lượng
+                    <input type="checkbox" id="misa-col" style="width:14px;height:14px;accent-color:#1565c0;cursor:pointer;"> Hiện cột Số lượng
                 </label>
                 <button id="misa-clear" style="background:#f5f5f5;color:#555;border:1px solid #e0e0e0;padding:8px;border-radius:6px;cursor:pointer;font-size:13px;width:100%;">Xóa màu</button>
             </div>
@@ -677,12 +746,24 @@
             console.log('[MISA màu] v2.1 đã khởi động (sandbox=' + hasGM + '). Gõ __misaColor.diag() để kiểm tra.');
         } catch (e) { console.error('[MISA màu] lỗi init:', e); }
     }
+    const ON_PAGE = () => location.pathname.startsWith('/app/SA/SAOrder');
+
     function start() {
         init();
         setInterval(() => {
             injectStyles();
-            if (document.body && !document.getElementById('misa-fab')) createPanel();
-            maintainColumn();
+            const fab = document.getElementById('misa-fab');
+            const panel = document.getElementById('misa-panel');
+            if (!document.body) return;
+            if (ON_PAGE()) {
+                if (!fab) createPanel();
+                else fab.style.display = '';
+                maintainColumn();
+            } else {
+                // Ẩn FAB + panel khi không ở trang Đơn đặt hàng
+                if (fab) fab.style.display = 'none';
+                if (panel) panel.style.display = 'none';
+            }
         }, 2000);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(start, 1200));
