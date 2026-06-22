@@ -61,7 +61,8 @@
     const COLOR_CLASSES = Object.keys(COLOR).map(k => `misa-${k}`);
 
     // Registry màu hiện tại để MutationObserver có thể re-apply khi MISA override
-    const coloredRows = new Map(); // <tr> → { bg, border }
+    const coloredRows = new Map();   // <tr> → COLOR entry
+    const rowBaseClasses = new Map(); // <tr> → Set<string> — snapshot class lúc vừa tô màu
     let colorObserver = null;
 
     /* ══════════════════════════════════════════════════════════════
@@ -256,16 +257,13 @@
         return 'none';
     }
 
-    // Row có class lạ (không phải ms-tr-viewer hay misa-*) = đang ở trạng thái active/selected
-    function isRowActive(row) {
-        return [...row.classList].some(cls => cls !== 'ms-tr-viewer' && !cls.startsWith('misa-'));
-    }
-
-    // Apply màu inline (normal hoặc darker khi active) — một chỗ duy nhất xử lý
     function reapplyColor(row) {
         const c = coloredRows.get(row);
         if (!c) return;
-        const bg = isRowActive(row) ? c.activeBg : c.bg;
+        const base = rowBaseClasses.get(row);
+        // Nếu có class mới so với lúc snapshot → MISA đang active row này
+        const isActive = base && [...row.classList].some(cls => !base.has(cls));
+        const bg = (isActive && c.activeBg) ? c.activeBg : c.bg;
         row.querySelectorAll('td').forEach((td, i) => {
             td.style.setProperty('background-color', bg, 'important');
             if (i === 0) td.style.setProperty('box-shadow', `inset 4px 0 0 ${c.border}`, 'important');
@@ -278,10 +276,11 @@
             td.style.removeProperty('background-color');
             td.style.removeProperty('box-shadow');
         });
-        if (!key) { coloredRows.delete(row); return; }
+        if (!key) { coloredRows.delete(row); rowBaseClasses.delete(row); return; }
         row.classList.add(`misa-${key}`);
         row.title = COLOR[key] ? COLOR[key].label : '';
         coloredRows.set(row, COLOR[key]);
+        rowBaseClasses.set(row, new Set(row.classList)); // snapshot sau khi add class misa-*
         reapplyColor(row);
     }
 
@@ -295,6 +294,7 @@
             });
         });
         coloredRows.clear();
+        rowBaseClasses.clear();
         if (colorObserver) { colorObserver.disconnect(); colorObserver = null; }
     }
 
