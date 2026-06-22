@@ -316,17 +316,16 @@
         const th = document.createElement('th');
         th.className = 'ms-th-viewer dymamic-col header misa-qty-col';
         th.style.cssText = `min-width:${COL_WIDTH}px;width:${COL_WIDTH}px;top:0px;`;
-        // tô màu nền + chữ giống các ô header khác
+        th.innerHTML = `<div class="col-draggable justify-center">
+            <span class="ms-head-title flex justify-center"><span>${COL_TITLE}</span></span></div>`;
+        // Copy màu nền + data-v-* (Vue scoped) xuống cả cây con để CSS Vue áp dụng đúng
         if (refTh) {
             const cs = getComputedStyle(refTh);
             th.style.backgroundColor = cs.backgroundColor;
             th.style.color = cs.color;
-            for (const attr of refTh.attributes) {
-                if (attr.name.startsWith('data-v-')) { th.setAttribute(attr.name, ''); break; }
-            }
+            const va = [...refTh.attributes].find(a => a.name.startsWith('data-v-'));
+            if (va) [th, ...th.querySelectorAll('*')].forEach(el => el.setAttribute(va.name, ''));
         }
-        th.innerHTML = `<div class="col-draggable justify-center">
-            <span class="ms-head-title flex justify-center"><span>${COL_TITLE}</span></span></div>`;
         if (refTh && refTh.parentNode) refTh.parentNode.insertBefore(th, refTh);
         else { // fallback: cuối nhóm cột động
             const w = document.querySelector('div.dis-contents');
@@ -364,6 +363,14 @@
                     emptyTh.className = 'ms-th-viewer dymamic-col misa-qty-cell';
                     emptyTh.style.cssText = `min-width:${COL_WIDTH}px;width:${COL_WIDTH}px;bottom:${ref.style.bottom || '42px'};`;
                     emptyTh.innerHTML = `<div class="flex justify-end"><span></span></div>`;
+                    // Copy background + data-v-* để màu xám footer và hover áp dụng đúng
+                    try {
+                        const cs = getComputedStyle(ref);
+                        const bg = cs.backgroundColor;
+                        if (bg && bg !== 'rgba(0, 0, 0, 0)') emptyTh.style.backgroundColor = bg;
+                        const va = [...ref.attributes].find(a => a.name.startsWith('data-v-'));
+                        if (va) [emptyTh, ...emptyTh.querySelectorAll('*')].forEach(el => el.setAttribute(va.name, ''));
+                    } catch(e) {}
                     ref.parentNode.insertBefore(emptyTh, ref);
                 }
                 return;
@@ -379,17 +386,16 @@
                 cell.innerHTML = `<div class="cell-content line-clamp-2"><div>
                     <div class="cell-text"><span isnumeric="true"></span></div></div></div>`;
                 const ref = cells[idx];
-                // Copy border + Vue scoped attribute (data-v-*) từ cell kề
-                // để hover/active CSS của MISA áp dụng đúng lên cell mình inject
+                // Copy border + data-v-* (Vue scoped) xuống cả cây con
+                // để hover/active/border CSS của MISA áp dụng đúng
                 try {
                     const cs = getComputedStyle(ref);
                     ['borderRight', 'borderBottom', 'borderTop', 'borderLeft'].forEach(p => {
                         const v = cs[p];
                         if (v && !v.startsWith('0px')) cell.style[p] = v;
                     });
-                    for (const attr of ref.attributes) {
-                        if (attr.name.startsWith('data-v-')) { cell.setAttribute(attr.name, ''); break; }
-                    }
+                    const va = [...ref.attributes].find(a => a.name.startsWith('data-v-'));
+                    if (va) [cell, ...cell.querySelectorAll('*')].forEach(el => el.setAttribute(va.name, ''));
                 } catch (e) {}
                 if (ref && ref.parentNode) ref.parentNode.insertBefore(cell, ref);
                 else row.appendChild(cell);
@@ -536,7 +542,7 @@
         ].join('');
         fab.innerHTML = `<img src="https://satoriwater.org/wp-content/uploads/2024/01/logo-satori-vuong.webp"
             style="width:36px;height:36px;border-radius:50%;object-fit:cover;display:block;" draggable="false">`;
-        fab.addEventListener('mouseenter', () => { fab.style.transform = 'scale(1.1)'; fab.style.boxShadow = '0 5px 20px rgba(0,0,0,.35)'; });
+        fab.addEventListener('mouseenter', () => { fab.style.transform = 'scale(1.07)'; fab.style.boxShadow = '0 4px 16px rgba(0,0,0,.28)'; });
         fab.addEventListener('mouseleave', () => { fab.style.transform = ''; fab.style.boxShadow = '0 3px 14px rgba(0,0,0,.25)'; });
         document.body.appendChild(fab);
 
@@ -602,7 +608,11 @@
         }, 1500);
 
         panel.querySelector('#misa-close').onclick = () => togglePanel(false);
-        panel.querySelector('#misa-clear').onclick = () => { clearAllColors(); setStatus('Đã xóa màu.'); };
+        const clearBtn = panel.querySelector('#misa-clear');
+        clearBtn.onclick = () => { clearAllColors(); setStatus('Đã xóa màu.'); };
+        clearBtn.style.transition = 'background .15s,transform .15s,box-shadow .15s,border-color .15s';
+        clearBtn.addEventListener('mouseenter', () => { clearBtn.style.background = '#ebebeb'; clearBtn.style.transform = 'translateY(-1px)'; clearBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,.1)'; clearBtn.style.borderColor = '#c8c8c8'; });
+        clearBtn.addEventListener('mouseleave', () => { clearBtn.style.background = '#f5f5f5'; clearBtn.style.transform = ''; clearBtn.style.boxShadow = ''; clearBtn.style.borderColor = '#e0e0e0'; });
 
         const colBox = panel.querySelector('#misa-col');
         colBox.checked = SHOW_COLUMN;
@@ -623,6 +633,9 @@
                 : credBadge());
         }
         scanBtn.onclick = doScan;
+        scanBtn.style.transition = 'background .15s,transform .15s,box-shadow .15s';
+        scanBtn.addEventListener('mouseenter', () => { if (!scanBtn.disabled) { scanBtn.style.background = '#1976d2'; scanBtn.style.transform = 'translateY(-1px)'; scanBtn.style.boxShadow = '0 4px 12px rgba(21,101,192,.35)'; } });
+        scanBtn.addEventListener('mouseleave', () => { scanBtn.style.background = '#1565c0'; scanBtn.style.transform = ''; scanBtn.style.boxShadow = ''; });
 
         let autoTimer = null;
         const obs = new MutationObserver(() => {
