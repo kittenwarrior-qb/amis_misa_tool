@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MISA AMIS - Tô màu đơn đặt hàng theo xuất kho (API)
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.3.0
 // @description  Tô màu dòng đơn đặt hàng dựa trên API get_paging_detail: Xanh=xuất đủ, Vàng=xuất một phần, Đỏ=chưa xuất kho. Tự bắt token, chạy được dù site có CSP.
 // @author       You
 // @match        https://actapp.misa.vn/*
@@ -9,6 +9,8 @@
 // @grant        unsafeWindow
 // @grant        GM_xmlhttpRequest
 // @grant        GM_addStyle
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @connect      actapp.misa.vn
 // @connect      self
 // @run-at       document-start
@@ -30,6 +32,26 @@
     const FIELD_EXPORTED = 'quantity_delivered_in'; // Số lượng đã xuất kho
 
     const CONCURRENCY = 6;
+
+    // Tool chỉ được phép Quét/tô màu/chèn cột ở trang Đơn đặt hàng — không đụng tới trang khác (vd Bán hàng)
+    const ORDER_PAGE_PATH = '/app/SA/SAOrder';
+    const onOrderPage = () => location.pathname.startsWith(ORDER_PAGE_PATH);
+
+    // Lưu trạng thái "Tự động quét" qua các lần mở lại trang
+    const hasGMStore = typeof GM_getValue !== 'undefined' && typeof GM_setValue !== 'undefined';
+    const AUTO_SCAN_KEY = 'misa_auto_scan';
+    function loadAutoScan() {
+        try {
+            if (hasGMStore) return !!GM_getValue(AUTO_SCAN_KEY, false);
+            return localStorage.getItem(AUTO_SCAN_KEY) === '1';
+        } catch (e) { return false; }
+    }
+    function saveAutoScan(v) {
+        try {
+            if (hasGMStore) GM_setValue(AUTO_SCAN_KEY, !!v);
+            else localStorage.setItem(AUTO_SCAN_KEY, v ? '1' : '0');
+        } catch (e) {}
+    }
 
     // Cột "SL gốc" chèn thêm vào lưới
     let SHOW_COLUMN = false;
@@ -484,7 +506,7 @@
     }
 
     function maintainColumn() {
-        if (!SHOW_COLUMN) { removeColumn(); return; }
+        if (!onOrderPage() || !SHOW_COLUMN) { removeColumn(); return; }
         try { ensureHeaderCol(); ensureBodyCells(); } catch (e) {}
     }
 
@@ -507,6 +529,10 @@
        9. QUÉT
     ══════════════════════════════════════════════════════════════ */
     async function scan(onProgress) {
+        if (!onOrderPage()) {
+            alert('Tool chỉ hoạt động ở trang Đơn đặt hàng (SA/SAOrder), không áp dụng cho trang khác.');
+            return null;
+        }
         if (!hasCreds()) {
             alert('Chưa bắt được phiên đăng nhập (token).\nHãy bấm nút Làm mới (⟳) trên lưới đơn đặt hàng rồi quét lại.');
             return null;
@@ -670,15 +696,27 @@
             : '<span style="color:#c62828">●</span> chờ token (bấm ⟳ trên lưới)';
 
         setStatus(credBadge());
+        let autoResumed = false;
         const t = setInterval(() => {
             if (!document.getElementById('misa-fab')) return clearInterval(t);
             const s = status.textContent;
             if (s.includes('chờ') || s.includes('sẵn sàng')) setStatus(credBadge());
+            // Mở lại trang: nếu trước đó đã bật "Tự động quét" → tự quét lại 1 lần
+            // ngay khi token sẵn sàng (chỉ ở trang Đơn đặt hàng)
+            if (!autoResumed && autoBox.checked && hasCreds() && onOrderPage() && !scanning) {
+                autoResumed = true;
+                doScan();
+            }
         }, 1500);
 
         panel.querySelector('#misa-close').onclick = () => togglePanel(false);
         const clearBtn = panel.querySelector('#misa-clear');
-        clearBtn.onclick = () => { clearAllColors(); setStatus('Đã xóa màu.'); };
+        clearBtn.onclick = () => {
+            clearAllColors();
+            setStatus('Đã xóa màu.');
+            // Tự động quét lại NGAY sau khi xóa màu, nếu đang bật tự động quét
+            if (autoBox.checked && !scanning) doScan();
+        };
         clearBtn.style.transition = 'background .15s,transform .15s,box-shadow .15s,border-color .15s';
         clearBtn.addEventListener('mouseenter', () => { clearBtn.style.background = '#ebebeb'; clearBtn.style.transform = 'translateY(-1px)'; clearBtn.style.boxShadow = '0 2px 8px rgba(0,0,0,.1)'; clearBtn.style.borderColor = '#c8c8c8'; });
         clearBtn.addEventListener('mouseleave', () => { clearBtn.style.background = '#f5f5f5'; clearBtn.style.transform = ''; clearBtn.style.boxShadow = ''; clearBtn.style.borderColor = '#e0e0e0'; });
@@ -706,15 +744,12 @@
         scanBtn.addEventListener('mouseenter', () => { if (!scanBtn.disabled) { scanBtn.style.background = '#1976d2'; scanBtn.style.transform = 'translateY(-1px)'; scanBtn.style.boxShadow = '0 4px 12px rgba(21,101,192,.35)'; } });
         scanBtn.addEventListener('mouseleave', () => { scanBtn.style.background = '#1565c0'; scanBtn.style.transform = ''; scanBtn.style.boxShadow = ''; });
 
-        let autoTimer = null;
-        const obs = new MutationObserver(() => {
-            if (!autoBox.checked) return;
-            clearTimeout(autoTimer);
-            autoTimer = setTimeout(() => { if (autoBox.checked && !scanning) doScan(); }, 900);
-        });
+        // Tự động quét: CHỈ quét khi (1) vừa bật checkbox, hoặc (2) vừa Xóa màu xong (xem clearBtn).
+        // Không theo dõi DOM liên tục — tránh vòng lặp tự gọi lại liên tục gây dính rate limit API.
+        autoBox.checked = loadAutoScan();
         autoBox.onchange = () => {
-            if (autoBox.checked) { obs.observe(document.body, { childList: true, subtree: true }); doScan(); }
-            else obs.disconnect();
+            saveAutoScan(autoBox.checked);
+            if (autoBox.checked && !scanning) doScan();
         };
 
         makeDraggable(panel, panel.querySelector('#misa-head'));
@@ -746,24 +781,15 @@
             console.log('[MISA màu] v2.1 đã khởi động (sandbox=' + hasGM + '). Gõ __misaColor.diag() để kiểm tra.');
         } catch (e) { console.error('[MISA màu] lỗi init:', e); }
     }
-    const ON_PAGE = () => location.pathname.startsWith('/app/SA/SAOrder');
-
     function start() {
         init();
         setInterval(() => {
             injectStyles();
-            const fab = document.getElementById('misa-fab');
-            const panel = document.getElementById('misa-panel');
             if (!document.body) return;
-            if (ON_PAGE()) {
-                if (!fab) createPanel();
-                else fab.style.display = '';
-                maintainColumn();
-            } else {
-                // Ẩn FAB + panel khi không ở trang Đơn đặt hàng
-                if (fab) fab.style.display = 'none';
-                if (panel) panel.style.display = 'none';
-            }
+            // FAB luôn hiển thị xuyên suốt mọi trang trong MISA (đỡ mất tập trung khi nó biến mất/xuất hiện).
+            // Việc Quét/tô màu/chèn cột thì TỰ GUARD bên trong (chỉ chạy ở trang Đơn đặt hàng) — xem onOrderPage().
+            if (!document.getElementById('misa-fab')) createPanel();
+            maintainColumn();
         }, 2000);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(start, 1200));
