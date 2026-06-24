@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MISA CRM - Export Chính sách giá JSON
 // @namespace    https://amisapp.misa.vn/
-// @version      1.2.1
+// @version      1.3.0
 // @description  Tự bắt token từ network, lấy toàn bộ chính sách giá (danh sách + chi tiết) và xuất file JSON
 // @author       Satori
 // @match        https://amisapp.misa.vn/crm/*
@@ -156,6 +156,71 @@
         );
     }
 
+    // Danh sách sản phẩm + giá bên trong 1 chính sách giá (sub-grid price_book_product)
+    const PRODUCT_PAGE_SIZE = 100;
+    async function fetchProductsPage(masterId, formLayoutId, page, token, company) {
+        return apiPost(
+            `${BASE}/DataSubPaging`,
+            `https://amisapp.misa.vn/crm/price-book/view/${masterId}/${formLayoutId}`,
+            {
+                // Base64 của: ID,SortOrder,ProductID,ProductIDText,Description,ProductCategoryID,
+                //   ProductCategoryIDText,ProductUnitID,ProductUnitIDText,BasedOn,BasedOnText,
+                //   ProcedurePrice,ProcedurePriceText,PriceValue,Price,DiscountTypeID,DiscountTypeIDText,Discount
+                Columns: 'SUQsU29ydE9yZGVyLFByb2R1Y3RJRCxQcm9kdWN0SURUZXh0LERlc2NyaXB0aW9uLFByb2R1Y3RDYXRlZ29yeUlELFByb2R1Y3RDYXRlZ29yeUlEVGV4dCxQcm9kdWN0VW5pdElELFByb2R1Y3RVbml0SURUZXh0LEJhc2VkT24sQmFzZWRPblRleHQsUHJvY2VkdXJlUHJpY2UsUHJvY2VkdXJlUHJpY2VUZXh0LFByaWNlVmFsdWUsUHJpY2UsRGlzY291bnRUeXBlSUQsRGlzY291bnRUeXBlSURUZXh0LERpc2NvdW50',
+                Sorts: [],
+                Start: (page - 1) * PRODUCT_PAGE_SIZE,
+                Page: page,
+                PageSize: PRODUCT_PAGE_SIZE,
+                Filters: [],
+                DefaultTotal: false,
+                IsMappingData: false,
+                MappingValueObject: {
+                    MasterID: String(masterId),
+                    TableName: 'price_book_product',
+                    MasterKey: 'CustomID',
+                    SumColumn: '',
+                },
+                IsApproved: false,
+                CustomPagingData: {
+                    SubFormConfig: {
+                        ColumnFieldSubForm: '',
+                        ColumnAggregateSubForm: '',
+                        TableName: 'price_book_product',
+                        IsSystem: true,
+                        ParentIDKey: 'CustomID',
+                        IsBringSerialType: false,
+                        AggregateField: [],
+                    },
+                },
+                IsUsedELTS: true,
+                ListGmailPage: [],
+                ListFacebookPage: {},
+                IsListPaging: true,
+                IsGetCache: false,
+                IsCheckInactive: false,
+                IsConverted: false,
+                SessionID: randomUUID(),
+                AISearchKeyword: '',
+                SkipNormalSearch: false,
+            },
+            token, company
+        );
+    }
+
+    async function fetchAllProducts(masterId, formLayoutId, token, company) {
+        let all = [];
+        let page = 1;
+        while (true) {
+            const resp = await fetchProductsPage(masterId, formLayoutId, page, token, company);
+            if (!resp || !resp.Success) throw new Error(`code=${resp?.Code ?? '?'}`);
+            if (!Array.isArray(resp.Data) || resp.Data.length === 0) break;
+            all = all.concat(resp.Data);
+            if (resp.Data.length < PRODUCT_PAGE_SIZE) break;
+            page++;
+        }
+        return all;
+    }
+
     /* ══════════════════════════════════════════════════════════════
        4. PARSE CURL (fallback cho user copy từ DevTools)
     ══════════════════════════════════════════════════════════════ */
@@ -196,23 +261,38 @@
 
             if (!allItems.length) { setStatus('Không có dữ liệu.', 'warn'); return; }
 
-            setStatus(`${allItems.length} chính sách — đang lấy chi tiết…`);
+            setStatus(`${allItems.length} chính sách — đang lấy chi tiết + sản phẩm…`);
 
             const results = [];
             for (let i = 0; i < allItems.length; i++) {
                 const item = allItems[i];
-                setStatus(`Chi tiết ${i + 1}/${allItems.length}: ${item.PriceBookCode}`);
+                setStatus(`${i + 1}/${allItems.length}: ${item.PriceBookCode} — chi tiết…`);
+                let detailData = null, detailError = null;
                 try {
                     const det = await fetchDetail(item.ID, item.FormLayoutID, token, company);
-                    results.push({
-                        ...item,
-                        Detail: (det.Success && det.Data?.CurrentData) ? det.Data.CurrentData : null,
-                        DetailError: det.Success ? null : `code=${det.Code}`,
-                    });
+                    detailData = (det.Success && det.Data?.CurrentData) ? det.Data.CurrentData : null;
+                    detailError = det.Success ? null : `code=${det.Code}`;
                 } catch (e) {
-                    results.push({ ...item, Detail: null, DetailError: e.message });
+                    detailError = e.message;
                 }
                 await sleep(DELAY_MS);
+
+                setStatus(`${i + 1}/${allItems.length}: ${item.PriceBookCode} — sản phẩm…`);
+                let products = [], productsError = null;
+                try {
+                    products = await fetchAllProducts(item.ID, item.FormLayoutID, token, company);
+                } catch (e) {
+                    productsError = e.message;
+                }
+                await sleep(DELAY_MS);
+
+                results.push({
+                    ...item,
+                    Detail: detailData,
+                    DetailError: detailError,
+                    Products: products,
+                    ProductsError: productsError,
+                });
             }
 
             const filename = `price-books-${nowStr()}.json`;
