@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MISA AMIS - Tô màu đơn đặt hàng theo xuất kho (API)
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.6.0
 // @description  Tô màu dòng đơn đặt hàng dựa trên API get_paging_detail: Xanh=xuất đủ, Vàng=xuất một phần, Đỏ=chưa xuất kho. Tự bắt token, chạy được dù site có CSP.
 // @author       You
 // @match        https://actapp.misa.vn/*
@@ -26,8 +26,6 @@
     /* ══════════════════════════════════════════════════════════════
        1. CẤU HÌNH
     ══════════════════════════════════════════════════════════════ */
-    const API_DETAIL_PATH = '/g2/api/sa/v1/sa_order/get_paging_detail';
-
     const FIELD_QTY      = 'quantity';              // Số lượng đặt
     const FIELD_EXPORTED = 'quantity_delivered_in'; // Số lượng đã xuất kho
 
@@ -96,6 +94,7 @@
         listBody: null,
         listResp: null,
         detailBody: null,
+        gPrefix: null, // 'g1', 'g2'... bắt động từ traffic thật — không hardcode
     };
     const hasCreds = () => !!cap.creds.Authorization;
 
@@ -112,25 +111,48 @@
         if (lk === 'x-device')       cap.creds['X-Device'] = v;
     }
 
-    const isSaApi     = u => u && /\/g2\/api\/sa\//.test(u);
-    const isDetailUrl = u => u && u.includes(API_DETAIL_PATH);
+    // Match /g1/, /g2/, /gX/api/ — KHÔNG hardcode số, vì MISA gán prefix theo session (g1, g2...)
+    const isSaApi     = u => u && /\/g\d+\/api\//i.test(u);
+    // Khớp endpoint detail theo PHẦN ĐUÔI đường dẫn (bỏ qua g-prefix) — tránh lệch g1 vs g2
+    const DETAIL_PATH_SUFFIX = '/api/sa/v1/sa_order/get_paging_detail';
+    const isDetailUrl = u => u && u.includes(DETAIL_PATH_SUFFIX);
+    // Bắt mọi response SA API (trừ detail) — chống bị đè bởi API phụ đã có ở maybeStoreList
+    const isSaOrderList = u => isSaApi(u) && !isDetailUrl(u);
 
-    // Một response là "danh sách đơn" nếu PageData[] có refid (GUID)
+    // Ghi nhớ g-prefix thật (g1, g2...) từ bất kỳ request SA API nào đi qua, để gọi lại đúng endpoint
+    function captureGPrefix(u) {
+        const m = u && u.match(/\/(g\d+)\/api\//i);
+        if (m) cap.gPrefix = m[1];
+    }
+    function detailUrl() {
+        return `${location.origin}/${cap.gPrefix || 'g1'}${DETAIL_PATH_SUFFIX}`;
+    }
+
+    // Trích PageData từ nhiều cấu trúc response khác nhau của MISA
+    function extractPageData(json) {
+        return json && json.Data && (json.Data.PageData || json.Data.Data) || null;
+    }
+
+    // Nhận diện danh sách đơn: mảng object không rỗng trong Data.PageData hoặc Data.Data
     function looksLikeOrderList(json) {
-        const pd = json && json.Data && json.Data.PageData;
-        if (!Array.isArray(pd) || !pd.length) return false;
-        const o = pd[0];
-        return Object.keys(o).some(k => /refid/i.test(k) && GUID.test(String(o[k])))
-            || Object.values(o).some(v => GUID.test(String(v)));
+        const pd = extractPageData(json);
+        return Array.isArray(pd) && pd.length > 0 && typeof pd[0] === 'object' && pd[0] !== null;
     }
 
     function maybeStoreList(url, text, body) {
         try {
             const j = JSON.parse(text);
             if (looksLikeOrderList(j)) {
-                cap.listResp = j.Data.PageData;
-                cap.listUrl = new URL(url, location.origin).href;
-                if (body != null) cap.listBody = body;
+                const pd = extractPageData(j);
+                // Chỉ ghi đè nếu response này có ≥ số item — tránh API phụ (1 item) đè danh sách chính (N item)
+                if (!cap.listResp || pd.length >= cap.listResp.length) {
+                    cap.listResp = pd;
+                    cap.listUrl = new URL(url, location.origin).href;
+                    if (body != null) cap.listBody = body;
+                    console.log('[MISA màu] ✓ bắt danh sách:', cap.listUrl, '—', pd.length, 'đơn, body:', body != null ? 'có' : 'null');
+                } else {
+                    console.log('[MISA màu] bỏ qua API phụ (ít hơn list đã bắt):', pd.length, '<', cap.listResp.length, url.split('?')[0].slice(-60));
+                }
             }
         } catch (e) {}
     }
@@ -144,8 +166,9 @@
         XP.send = function (body) {
             try {
                 const url = this.__u || '';
+                if (isSaApi(url)) captureGPrefix(url);
                 if (isDetailUrl(url) && body) cap.detailBody = body;
-                if (isSaApi(url) && !isDetailUrl(url)) {
+                if (isSaOrderList(url)) {
                     const self = this;
                     this.addEventListener('load', function () {
                         if (self.responseType === '' || self.responseType === 'text') {
@@ -169,10 +192,11 @@
                     if (typeof h.forEach === 'function' && !Array.isArray(h)) h.forEach((v, k) => captureCredHeader(k, v));
                     else Object.keys(h).forEach(k => captureCredHeader(k, h[k]));
                 }
+                if (isSaApi(url)) captureGPrefix(url);
                 if (isDetailUrl(url) && init && init.body) cap.detailBody = init.body;
                 const body = init && init.body;
                 const p = _fetch.apply(this, arguments);
-                if (isSaApi(url) && !isDetailUrl(url)) {
+                if (isSaOrderList(url)) {
                     p.then(r => { try { r.clone().text().then(t => maybeStoreList(url, t, body)).catch(() => {}); } catch (e) {} });
                 }
                 return p;
@@ -216,10 +240,18 @@
         if (cap.listUrl && cap.listBody != null) {
             try {
                 const j = await apiPost(cap.listUrl, cap.listBody);
-                if (j && j.Data && j.Data.PageData) return j.Data.PageData;
+                const pd = extractPageData(j);
+                if (pd && pd.length) {
+                    console.log('[MISA màu] ✓ replay danh sách:', pd.length, 'đơn');
+                    return pd;
+                }
             } catch (e) { console.warn('[MISA màu] replay list lỗi:', e); }
         }
-        return cap.listResp || [];
+        if (cap.listResp && cap.listResp.length) {
+            console.log('[MISA màu] dùng cache danh sách:', cap.listResp.length, 'đơn');
+            return cap.listResp;
+        }
+        return [];
     }
 
     function buildDetailBody(refid) {
@@ -241,7 +273,7 @@
     }
 
     async function fetchOrderSummary(refid) {
-        const j = await apiPost(location.origin + API_DETAIL_PATH, buildDetailBody(refid));
+        const j = await apiPost(detailUrl(), buildDetailBody(refid));
         const s = (j && j.Data && j.Data.SummaryData) || {};
         return { qty: num(s[FIELD_QTY]), exported: num(s[FIELD_EXPORTED]) };
     }
@@ -539,7 +571,13 @@
         }
         const orders = await fetchOrderList();
         if (!orders.length) {
-            alert('Không lấy được danh sách đơn.\nHãy bấm Làm mới (⟳) trên lưới rồi thử lại.');
+            const diagInfo = [
+                'URL bắt được: ' + (cap.listUrl ? cap.listUrl.split('/').slice(-3).join('/') : 'chưa có'),
+                'Số đơn cache: ' + (cap.listResp ? cap.listResp.length : 0),
+                'Body bắt được: ' + (cap.listBody != null ? 'có' : 'null'),
+                'Token: ' + (hasCreds() ? 'có' : 'chưa có'),
+            ].join('\n');
+            alert('Không lấy được danh sách đơn.\n\n── Thông tin chẩn đoán ──\n' + diagInfo + '\n\n► Bấm Làm mới (⟳) trên lưới, chờ load xong rồi Quét lại.\n► Mở Console (F12) → xem dòng [MISA màu] để biết URL nào bị bỏ qua.');
             return null;
         }
         console.log('[MISA màu] mẫu đơn:', orders[0]);
